@@ -22,9 +22,18 @@ export default function TabLayout() {
         }}
       />
       <Tabs.Screen
+        name="prices"
+        options={{
+          title: 'Prices',
+          tabBarIcon: ({ color }) => (
+            <TabIcon name={{ ios: 'dollarsign.circle', android: 'payments', web: 'payments' }} color={color} />
+          ),
+        }}
+      />
+      <Tabs.Screen
         name="deals"
         options={{
-          title: 'Weekly Deals',
+          title: 'Deals',
           tabBarIcon: ({ color }) => <TabIcon name={{ ios: 'tag', android: 'sell', web: 'sell' }} color={color} />,
         }}
       />

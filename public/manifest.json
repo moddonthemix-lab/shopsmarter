@@ -1,0 +1,14 @@
+{
+  "name": "Florida Grocery Saver",
+  "short_name": "Grocery Saver",
+  "description": "Find the cheapest store for your whole grocery list.",
+  "icons": [
+    { "src": "icon-192.png", "type": "image/png", "sizes": "192x192", "purpose": "any maskable" },
+    { "src": "icon-512.png", "type": "image/png", "sizes": "512x512", "purpose": "any maskable" }
+  ],
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "theme_color": "#1F8A4C",
+  "background_color": "#F6F7F4"
+}

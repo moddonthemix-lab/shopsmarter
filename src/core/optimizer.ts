@@ -256,3 +256,34 @@ export function substitutionsFor(matches: ItemMatches[], storeId: StoreId, minSa
   }
   return out.sort((a, b) => b.savings - a.savings);
 }
+
+export interface ShoppingStop {
+  storeId: StoreId;
+  lines: PricedLine[];
+  subtotal: number;
+}
+
+/**
+ * Shopping-mode view of a plan: every item assigned to its cheapest store
+ * among `storeIds`, grouped per store in the order given.
+ */
+export function assignToStores(
+  matches: ItemMatches[],
+  storeIds: StoreId[],
+): { stops: ShoppingStop[]; unavailable: GroceryItem[] } {
+  const byStore = new Map<StoreId, PricedLine[]>(storeIds.map((s) => [s, []]));
+  const unavailable: GroceryItem[] = [];
+  for (const m of matches) {
+    let best: Product | null = null;
+    for (const s of storeIds) {
+      const p = m.byStore[s]?.product;
+      if (p && (!best || p.price < best.price)) best = p;
+    }
+    if (best) byStore.get(best.storeId)!.push(lineFor(m.item, best));
+    else unavailable.push(m.item);
+  }
+  const stops = storeIds
+    .map((storeId) => ({ storeId, lines: byStore.get(storeId)!, subtotal: sum(byStore.get(storeId)!) }))
+    .filter((s) => s.lines.length > 0);
+  return { stops, unavailable };
+}

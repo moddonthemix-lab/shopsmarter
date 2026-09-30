@@ -2,6 +2,9 @@ import { describe, expect, it } from 'vitest';
 
 import {
   activeDeals,
+  assignToStores,
+  makeCustomProduct,
+  resolveProducts,
   compareList,
   DEFAULT_DRIVING,
   DEFAULT_HOME,
@@ -186,5 +189,48 @@ describe('deals', () => {
     expect(activeDeals(SAMPLE_PRODUCTS, '2026-12-01')).toHaveLength(0);
     const chips = SAMPLE_PRODUCTS.find((p) => p.id === 'publix:tortilla-chips')!;
     expect(chips.price).toBeCloseTo(chips.regularPrice! / 2);
+  });
+});
+
+describe('resolveProducts', () => {
+  const noData = { overrides: {}, custom: [] };
+
+  it('applies your prices and drops the sample deal', () => {
+    const resolved = resolveProducts(
+      SAMPLE_PRODUCTS,
+      { overrides: { 'publix:white-bread': { price: 2.5, updatedAt: '2026-10-01' } }, custom: [] },
+      '2026-09-30',
+    );
+    const bread = resolved.find((p) => p.id === 'publix:white-bread')!;
+    expect(bread).toMatchObject({ price: 2.5, source: 'user', lastUpdated: '2026-10-01' });
+    expect(bread.deal).toBeUndefined();
+  });
+
+  it('reverts expired deals to the shelf price', () => {
+    const before = resolveProducts(SAMPLE_PRODUCTS, noData, '2026-09-30').find((p) => p.id === 'walmart:orange-juice')!;
+    const after = resolveProducts(SAMPLE_PRODUCTS, noData, '2026-12-01').find((p) => p.id === 'walmart:orange-juice')!;
+    expect(before.deal?.kind).toBe('rollback');
+    expect(after.deal).toBeUndefined();
+    expect(after.price).toBe(before.regularPrice);
+  });
+
+  it('lets a product you added win over a loose sample match', () => {
+    const custom = makeCustomProduct('aldi', 'Cuban bread', 1.79, '2026-09-30');
+    const products = resolveProducts(SAMPLE_PRODUCTS, { overrides: {}, custom: [custom] }, '2026-09-30');
+    const [cuban] = matchList(items('Cuban bread'), products);
+    expect(cuban.byStore.aldi?.product.id).toBe(custom.id);
+    expect(cuban.byStore.aldi?.score).toBe(1);
+  });
+});
+
+describe('assignToStores', () => {
+  it('groups items by the cheapest chosen store', () => {
+    const matches = matchList(items('Milk', 'Chicken Breast', 'Frozen pizza'), SAMPLE_PRODUCTS);
+    const { stops, unavailable } = assignToStores(matches, ['aldi', 'winndixie']);
+    expect(stops.map((s) => s.storeId)).toEqual(['aldi', 'winndixie']);
+    expect(stops[0].lines.map((l) => l.item.name)).toEqual(['Milk']);
+    expect(stops[1].lines.map((l) => l.item.name)).toEqual(['Chicken Breast', 'Frozen pizza']);
+    expect(unavailable).toEqual([]);
+    expect(assignToStores(matches, ['aldi']).unavailable.map((i) => i.name)).toEqual(['Frozen pizza']);
   });
 });

@@ -1,105 +1,107 @@
 # Florida Grocery Saver
 
-Find the cheapest place to buy your whole grocery list across **Walmart, Aldi, Publix and Winn-Dixie**,
-and whether a multi-store trip is actually worth the gas.
+A personal app that finds the cheapest place to buy your whole grocery list across **Walmart, Aldi, Publix and
+Winn-Dixie**, and tells you whether a second stop is actually worth the gas.
 
-Built with Expo (React Native + web), Expo Router and Supabase.
+Built with Expo (runs on iPhone, Android and the web). No account or server needed; everything is saved on your
+device.
 
-## What works today
+## How to use it
 
-| Spec step | Status |
-| --- | --- |
-| **1. Create list:** type, paste (one per line / comma separated, `2 milk`, `eggs x3`), clipboard paste, keyboard dictation, duplicate, templates | ✅ |
-| **Natural-language input:** “Need food for tacos, breakfast, and snacks this week.” | ✅ OpenAI via edge function, with an offline meal-dictionary fallback |
-| **2. Match products:** fuzzy keyword matching picks the closest product at each store and flags loose matches | ✅ |
-| **3. Price comparison:** per-store totals, cheapest store highlighted, missing items called out | ✅ |
-| **4. Split-trip optimization:** every store combination is evaluated; items go to their cheapest store in the combo | ✅ |
-| **5. Driving cost:** nearest location per chain, shortest round-trip route, fuel cost from MPG + gas price, optional value of time, **net savings** and a clear “worth it / not worth it” verdict | ✅ |
-| Smart substitutions (“Publix milk is $1.54 more than Aldi”) | ✅ |
-| Weekly deals: Publix BOGOs, Walmart Rollbacks, Aldi specials, Winn-Dixie promos (with “add to list”) | ✅ |
-| Free plan: 10 comparisons / month; Pro plan preview | ✅ (billing not wired up) |
-| Accounts: email/password, Google, Apple (Supabase Auth) + cloud list sync | ✅ when Supabase is configured |
-| Price history, alerts, receipts | Schema ready (`price_history` is populated by a trigger); UI not built yet |
-| Meal builder, family budget mode, receipt scanning, push notifications | Roadmap |
+1. **My Lists:** type or paste items (`2 milk`, `eggs x3`, one per line or comma-separated), or describe your week
+   ("Need food for tacos and breakfast") and it builds the list. Save lists as templates to reuse every week.
+2. **Compare prices:** see each store's total, the cheapest store, whether a split trip saves money after gas, and
+   which items are cheaper somewhere else.
+3. **Start shopping:** a checklist grouped by store in driving order. Tick items off as they go in the cart.
+4. **Keep prices real:** the app ships with **sample prices**. Tap any price (in a comparison, the shopping
+   checklist or the **Prices** tab) and enter what you see on the shelf or your receipt. Your prices are marked ✓,
+   used for every future comparison, and tracked over time (price history and "price drops you've spotted" on the
+   Deals tab). If a store carries something the app doesn't know about, use **+ add price**.
+5. **Settings:** your car's MPG, gas price, home location (for driving distances), which stores you shop at, and
+   **Backup**. Copy a backup now and then (it's just text, so paste it into a note), especially on iPhone where
+   Safari can clear website data for sites you haven't added to your home screen.
 
-> **Prices are sample data.** `src/core/catalog.ts` holds an illustrative Tampa Bay catalog so the app works
-> end to end without a backend. Real prices should be loaded into the Supabase `products` table by an ingestion job
-> (retailer APIs/feeds, receipt scans) and fetched by the app instead of `SAMPLE_PRODUCTS`.
+## Put it on your phone
 
-## How the savings math works
+### Option A: GitHub Pages (free, recommended)
 
-All of it is pure TypeScript in `src/core/` (no React), unit tested with Vitest.
+The repo includes a workflow (`.github/workflows/deploy-pages.yml`) that builds and publishes the web app whenever
+`main` is pushed.
 
-1. **Matching** (`matching.ts`): each item is tokenized and scored against each product’s keywords (Jaccard) and title
-   (containment). Best product per store above a threshold wins; scores below 0.8 are shown as “closest match”.
-2. **Store totals** (`optimizer.ts`): price × quantity. Publix single BOGO items ring up at half price, so that is the
-   effective unit price.
-3. **Split trip**: for every non-empty subset of stores (15 for 4 stores), assign each item to its cheapest store in
-   the subset. Subsets where a store gets no items are skipped.
-4. **Driving** (`driving.ts`): pick the chain location nearest home, find the shortest round trip through the stops
-   (brute force over visit orders), convert straight-line distance to road miles (×1.3), then
-   `fuel = miles / mpg × gas price` and `time = drive minutes + 10 min per stop`.
-5. **Recommendation**: the best split is the one with the lowest *true cost* (groceries + fuel + time).
-   `net savings = (single-store total − split total) − extra fuel − extra time`. A split is recommended only when net
-   savings beat the user’s minimum (default $3).
+1. Merge this branch into `main`.
+2. On GitHub go to **Settings → Pages → Build and deployment → Source** and choose **GitHub Actions**.
+3. Run the **Deploy web app to GitHub Pages** workflow (Actions tab), or push to `main`.
+4. Open `https://<your-username>.github.io/shopsmarter/` on your phone and add it to your home screen: **Share → Add
+   to Home Screen** in Safari, or **⋮ → Add to Home screen / Install app** in Chrome. It opens full screen with its
+   own icon.
 
-## Getting started
+GitHub Pages is free for public repositories; a private repo needs a paid GitHub plan for Pages. Your lists and
+prices are never uploaded anywhere; they stay in your phone's browser storage.
+
+### Option B: Railway
+
+`railway.json` is included. Create a Railway project from this repo; it runs `npm run build:web` and serves the
+app with `npm run serve:web` on Railway's `PORT`. Then open the Railway URL on your phone and add it to your home
+screen the same way. Railway is a paid, always-on server, which this app doesn't need, so GitHub Pages is the
+better fit.
+
+### Option C: Expo Go (native app, while your computer is on)
 
 ```bash
 npm install
-npm start          # Expo dev server – press w for web, or scan the QR code with Expo Go
-npm test           # core pricing/matching/driving tests
-npm run typecheck
+npm start        # scan the QR code with the Expo Go app
 ```
 
-Without any configuration the app runs fully offline: lists and settings are stored on the device.
+For a permanent native install, build it with EAS (`npx eas-cli@latest build --profile preview`).
 
-### Supabase (accounts, sync, AI)
+## Development
 
-1. Create a Supabase project and copy `.env.example` to `.env.local`, filling in the URL and anon key.
-2. Apply the schema: `supabase link --project-ref <ref>` then `supabase db push`
-   (or paste `supabase/migrations/*.sql` into the SQL editor).
-3. Auth → Providers: enable Email, Google and Apple. Add redirect URLs `grocerysaver://account` (native) and your web
-   origin.
-4. Natural-language input:
-   ```bash
-   supabase secrets set OPENAI_API_KEY=sk-...
-   supabase functions deploy parse-grocery-list
-   ```
+```bash
+npm install
+npm start            # dev server (press w for web)
+npm test             # pricing engine tests
+npx tsc --noEmit     # typecheck
+npx expo lint
+npm run build:web    # production web build in dist/ (EXPO_BASE_URL=/shopsmarter for a sub-path)
+```
 
-### Database
+### How the savings math works
 
-`supabase/migrations/20260930000000_init.sql` creates the tables from the spec — `users`, `grocery_lists`,
-`grocery_items`, `stores`, `products`, `price_history`, `alerts`, `receipts` — plus `store_locations` (for driving
-distance) and `comparisons` (free-plan metering). Row level security limits user data to its owner; catalog tables are
-public-read and written by the service role. A trigger appends to `price_history` whenever a product price changes.
+All pricing logic is plain TypeScript in `src/core/` and covered by tests.
+
+- **Matching** (`matching.ts`): each list item is scored against every product's keywords and name; the best
+  product per store wins. Weak matches are labelled "closest match".
+- **Your prices** (`prices.ts`): your prices replace sample prices, sample deals revert to shelf price once they
+  expire, and items you added are included.
+- **Split trip** (`optimizer.ts`): every combination of your stores is tried, and each item goes to its cheapest
+  store in that combination.
+- **Driving** (`driving.ts`): nearest location of each chain to your home, the shortest round trip through the
+  stops, road miles estimated as straight-line distance × 1.3, and fuel = miles ÷ MPG × gas price. You can also put
+  a dollar value on your time.
+- **Recommendation:** net savings = grocery savings − extra gas − extra time. A split trip is only recommended when
+  that beats your minimum (default $3).
+
+### Optional extras (not needed for personal use)
+
+`supabase/` contains a Postgres schema and an OpenAI edge function for cloud sync, accounts and smarter
+natural-language lists. They switch on only if `EXPO_PUBLIC_SUPABASE_URL` and `EXPO_PUBLIC_SUPABASE_ANON_KEY` are set
+(see `.env.example`). Without them the app is fully offline and the list builder uses a built-in meal dictionary.
 
 ## Project layout
 
 ```
 src/
-  app/                 Expo Router screens
-    (tabs)/index.tsx   My Lists + AI list builder + templates
-    (tabs)/deals.tsx   Weekly deals
-    (tabs)/settings.tsx  MPG, gas price, time value, home location, plan, account
-    list/[id].tsx      List editor
-    compare/[id].tsx   Comparison, split trip, driving analysis, substitutions
-    account.tsx        Sign in / sign up (email, Google, Apple)
-  core/                Pure pricing engine + sample catalog (+ tests)
-  lib/                 Supabase client, sync, AI parsing
-  state/AppState.tsx   Local-first app state (AsyncStorage) with cloud sync
-supabase/
-  migrations/          Postgres schema + RLS
-  functions/parse-grocery-list/  OpenAI natural-language → grocery items
+  app/                  screens (Expo Router)
+    (tabs)/index.tsx    My Lists + list builder + templates
+    (tabs)/prices.tsx   price book: every item × store, tap to update
+    (tabs)/deals.tsx    your price drops + weekly specials
+    (tabs)/settings.tsx driving costs, home, stores, backup
+    list/[id].tsx       list editor
+    compare/[id].tsx    comparison, split trip, gas, substitutions
+    shop/[id].tsx       in-store checklist
+    price.tsx           enter/update a price, price history
+  core/                 pricing engine, sample catalog, tests
+  state/AppState.tsx    on-device storage
+public/                 web app manifest, icons, index.html
+scripts/postexport.mjs  prepares dist/ for static hosting
 ```
-
-## Roadmap
-
-- Live price ingestion into `products`, and fetch the catalog from Supabase instead of the bundled sample.
-- Price history charts and price-drop alerts (Firebase Cloud Messaging / Expo push).
-- Receipt scanning (upload to Supabase Storage → OCR → `products` / `price_history`).
-- Cheapest meal builder and family budget mode (budget → meal plan → list → store recommendation).
-- Pro billing (App Store / Play subscriptions, e.g. via RevenueCat) setting `users.plan` server-side, and enforcing the
-  free-plan quota via the `comparisons` table.
-- More stores: Target, Costco, Sam’s Club, Trader Joe’s (add to `StoreId`, `STORES` and `STORE_LOCATIONS`).
-- Google Maps Distance Matrix for real drive distances instead of the circuity estimate.

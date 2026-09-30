@@ -2,14 +2,24 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { Session } from '@supabase/supabase-js';
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 
-import { DEFAULT_DRIVING, DEFAULT_HOME, type DrivingSettings, type GroceryItem, type GroceryList } from '@/core';
+import {
+  DEFAULT_DRIVING,
+  DEFAULT_HOME,
+  makeCustomProduct,
+  resolveProducts,
+  SAMPLE_PRODUCTS,
+  STORE_IDS,
+  type DrivingSettings,
+  type GroceryItem,
+  type GroceryList,
+  type PriceOverride,
+  type PricePoint,
+  type Product,
+  type StoreId,
+} from '@/core';
+import { newId } from '@/lib/id';
 import { supabase } from '@/lib/supabase';
 import { deleteRemoteList, mergeLists, pullLists, pushList } from '@/lib/sync';
-import { newId } from '@/lib/id';
-
-export const FREE_COMPARISONS_PER_MONTH = 10;
-
-export type Plan = 'free' | 'pro';
 
 export interface Home {
   lat: number;
@@ -22,18 +32,16 @@ export interface Settings {
   home: Home;
   /** Only recommend a split trip when it nets at least this many dollars. */
   splitThreshold: number;
-  plan: Plan;
-}
-
-interface Usage {
-  month: string;
-  comparisons: number;
+  /** Stores you actually shop at. */
+  enabledStores: StoreId[];
 }
 
 interface PersistedState {
   lists: GroceryList[];
   settings: Settings;
-  usage: Usage;
+  priceOverrides: Record<string, PriceOverride>;
+  customProducts: Product[];
+  priceHistory: Record<string, PricePoint[]>;
 }
 
 const STORAGE_KEY = 'fgs/state/v1';
@@ -42,11 +50,15 @@ const DEFAULT_SETTINGS: Settings = {
   driving: DEFAULT_DRIVING,
   home: DEFAULT_HOME,
   splitThreshold: 3,
-  plan: 'free',
+  enabledStores: STORE_IDS,
 };
 
 const now = () => new Date().toISOString();
-const currentMonth = () => now().slice(0, 7);
+/** Local calendar date (not UTC), so evening edits land on the right day. */
+export const todayISO = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};
 
 function items(...names: string[]): GroceryItem[] {
   return names.map((name) => ({ id: newId(), name, quantity: 1 }));
@@ -71,22 +83,57 @@ function initialState(): PersistedState {
       },
     ],
     settings: DEFAULT_SETTINGS,
-    usage: { month: currentMonth(), comparisons: 0 },
+    priceOverrides: {},
+    customProducts: [],
+    priceHistory: {},
   };
 }
 
+/** Accepts saved data from any earlier version (or a backup) and fills gaps. */
+function hydrate(saved: Partial<PersistedState>): PersistedState {
+  const enabled = saved.settings?.enabledStores?.filter((s) => STORE_IDS.includes(s));
+  return {
+    lists: Array.isArray(saved.lists) ? saved.lists : [],
+    settings: {
+      ...DEFAULT_SETTINGS,
+      ...saved.settings,
+      driving: { ...DEFAULT_DRIVING, ...saved.settings?.driving },
+      enabledStores: enabled?.length ? enabled : STORE_IDS,
+    },
+    priceOverrides: saved.priceOverrides ?? {},
+    customProducts: saved.customProducts ?? [],
+    priceHistory: saved.priceHistory ?? {},
+  };
+}
+
+/** Append today's price to a product's history (one entry per day, last 50 kept). */
+function withHistory(s: PersistedState, productId: string, price: number): Record<string, PricePoint[]> {
+  const date = todayISO();
+  const past = (s.priceHistory[productId] ?? []).filter((p) => p.date !== date);
+  return { ...s.priceHistory, [productId]: [...past, { price, date }].slice(-50) };
+}
+
 interface AppStateValue extends PersistedState {
-  ready: boolean;
   session: Session | null;
+  /** Catalog with your prices applied – use this for all pricing. */
+  products: Product[];
   getList: (id: string) => GroceryList | undefined;
   createList: (title: string, items?: Omit<GroceryItem, 'id'>[], isTemplate?: boolean) => string;
   updateList: (id: string, patch: Partial<Omit<GroceryList, 'id'>>) => void;
   deleteList: (id: string) => void;
   duplicateList: (id: string, opts?: { asTemplate?: boolean; title?: string }) => string | undefined;
+  /** Add items to a list, merging quantities of items already on it. */
+  addItems: (listId: string, items: Omit<GroceryItem, 'id'>[]) => void;
   updateSettings: (patch: Partial<Settings>) => void;
-  comparisonsLeft: () => number;
-  /** Counts a comparison against the monthly quota; false if over the limit. */
-  consumeComparison: () => boolean;
+  /** Record the price you paid/saw for a catalog product. */
+  setPrice: (productId: string, price: number) => void;
+  /** Go back to the sample price for a catalog product. */
+  clearPrice: (productId: string) => void;
+  /** Add (or re-price) a product a store carries that isn't in the catalog. Returns its id. */
+  addCustomProduct: (storeId: StoreId, name: string, price: number, size?: string) => string;
+  deleteCustomProduct: (productId: string) => void;
+  exportData: () => string;
+  importData: (json: string) => void;
 }
 
 const AppStateContext = createContext<AppStateValue | null>(null);
@@ -101,7 +148,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   const commit = useCallback((next: PersistedState) => {
     stateRef.current = next;
     setState(next);
-    AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(next)).catch(() => {});
+    AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(next)).catch((e) => console.warn('Save failed', e));
   }, []);
 
   const sync = useCallback((fn: (userId: string) => Promise<void>) => {
@@ -110,27 +157,15 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     fn(userId).catch((e) => console.warn('Sync failed', e));
   }, []);
 
-  // Load persisted state.
+  // Load persisted state before rendering anything, so nothing can overwrite it.
   useEffect(() => {
     AsyncStorage.getItem(STORAGE_KEY)
-      .then((raw) => {
-        if (!raw) return commit(stateRef.current);
-        const saved = JSON.parse(raw) as Partial<PersistedState>;
-        commit({
-          lists: saved.lists ?? [],
-          settings: {
-            ...DEFAULT_SETTINGS,
-            ...saved.settings,
-            driving: { ...DEFAULT_DRIVING, ...saved.settings?.driving },
-          },
-          usage: saved.usage ?? { month: currentMonth(), comparisons: 0 },
-        });
-      })
-      .catch(() => {})
+      .then((raw) => commit(raw ? hydrate(JSON.parse(raw)) : stateRef.current))
+      .catch((e) => console.warn('Load failed', e))
       .finally(() => setReady(true));
   }, [commit]);
 
-  // Track auth and pull cloud lists on sign-in.
+  // Optional cloud sync: track auth and pull lists on sign-in.
   useEffect(() => {
     if (!supabase) return;
     const onSession = (next: Session | null) => {
@@ -157,6 +192,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   const pushTimers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
   const schedulePush = useCallback(
     (list: GroceryList) => {
+      if (!sessionRef.current) return;
       const timers = pushTimers.current;
       clearTimeout(timers.get(list.id));
       timers.set(
@@ -189,7 +225,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         id: newId(),
         title,
         isTemplate,
-        items: newItems.map((i) => ({ ...i, id: newId() })),
+        items: newItems.map((i) => ({ name: i.name, quantity: i.quantity, id: newId() })),
         updatedAt: now(),
       };
       saveList(list);
@@ -202,6 +238,21 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     (id, patch) => {
       const list = stateRef.current.lists.find((l) => l.id === id);
       if (list) saveList({ ...list, ...patch, updatedAt: now() });
+    },
+    [saveList],
+  );
+
+  const addItems = useCallback<AppStateValue['addItems']>(
+    (listId, incoming) => {
+      const list = stateRef.current.lists.find((l) => l.id === listId);
+      if (!list) return;
+      const next = list.items.map((i) => ({ ...i }));
+      for (const p of incoming) {
+        const existing = next.find((i) => i.name.toLowerCase() === p.name.toLowerCase());
+        if (existing) existing.quantity += p.quantity;
+        else next.push({ id: newId(), name: p.name, quantity: p.quantity });
+      }
+      saveList({ ...list, items: next, updatedAt: now() });
     },
     [saveList],
   );
@@ -236,39 +287,119 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     [commit],
   );
 
-  const comparisonsLeft = useCallback(() => {
-    const s = stateRef.current;
-    if (s.settings.plan === 'pro') return Infinity;
-    const used = s.usage.month === currentMonth() ? s.usage.comparisons : 0;
-    return Math.max(0, FREE_COMPARISONS_PER_MONTH - used);
-  }, []);
+  const setPrice = useCallback(
+    (productId: string, price: number) => {
+      const s = stateRef.current;
+      if (s.customProducts.some((p) => p.id === productId)) {
+        commit({
+          ...s,
+          customProducts: s.customProducts.map((p) =>
+            p.id === productId ? { ...p, price, lastUpdated: todayISO() } : p,
+          ),
+          priceHistory: withHistory(s, productId, price),
+        });
+        return;
+      }
+      commit({
+        ...s,
+        priceOverrides: { ...s.priceOverrides, [productId]: { price, updatedAt: todayISO() } },
+        priceHistory: withHistory(s, productId, price),
+      });
+    },
+    [commit],
+  );
 
-  const consumeComparison = useCallback(() => {
-    const s = stateRef.current;
-    if (comparisonsLeft() <= 0) return false;
-    const month = currentMonth();
-    const used = s.usage.month === month ? s.usage.comparisons : 0;
-    commit({ ...s, usage: { month, comparisons: used + 1 } });
-    return true;
-  }, [commit, comparisonsLeft]);
+  const clearPrice = useCallback(
+    (productId: string) => {
+      const s = stateRef.current;
+      const { [productId]: _removed, ...rest } = s.priceOverrides;
+      commit({ ...s, priceOverrides: rest });
+    },
+    [commit],
+  );
+
+  const addCustomProduct = useCallback<AppStateValue['addCustomProduct']>(
+    (storeId, name, price, size = '') => {
+      const s = stateRef.current;
+      const product = makeCustomProduct(storeId, name, price, todayISO(), size);
+      commit({
+        ...s,
+        customProducts: [...s.customProducts.filter((p) => p.id !== product.id), product],
+        priceHistory: withHistory(s, product.id, price),
+      });
+      return product.id;
+    },
+    [commit],
+  );
+
+  const deleteCustomProduct = useCallback(
+    (productId: string) => {
+      const s = stateRef.current;
+      const { [productId]: _removed, ...history } = s.priceHistory;
+      commit({ ...s, customProducts: s.customProducts.filter((p) => p.id !== productId), priceHistory: history });
+    },
+    [commit],
+  );
+
+  const exportData = useCallback(() => JSON.stringify({ app: 'florida-grocery-saver', version: 1, ...stateRef.current }), []);
+
+  const importData = useCallback(
+    (json: string) => {
+      const parsed = JSON.parse(json);
+      if (!parsed || typeof parsed !== 'object' || !Array.isArray(parsed.lists)) {
+        throw new Error('That doesn’t look like a Grocery Saver backup.');
+      }
+      commit(hydrate(parsed));
+    },
+    [commit],
+  );
+
+  const today = todayISO();
+  const products = useMemo(
+    () => resolveProducts(SAMPLE_PRODUCTS, { overrides: state.priceOverrides, custom: state.customProducts }, today),
+    [state.priceOverrides, state.customProducts, today],
+  );
 
   const value = useMemo<AppStateValue>(
     () => ({
       ...state,
-      ready,
       session,
+      products,
       getList,
       createList,
       updateList,
       deleteList,
       duplicateList,
+      addItems,
       updateSettings,
-      comparisonsLeft,
-      consumeComparison,
+      setPrice,
+      clearPrice,
+      addCustomProduct,
+      deleteCustomProduct,
+      exportData,
+      importData,
     }),
-    [state, ready, session, getList, createList, updateList, deleteList, duplicateList, updateSettings, comparisonsLeft, consumeComparison],
+    [
+      state,
+      session,
+      products,
+      getList,
+      createList,
+      updateList,
+      deleteList,
+      duplicateList,
+      addItems,
+      updateSettings,
+      setPrice,
+      clearPrice,
+      addCustomProduct,
+      deleteCustomProduct,
+      exportData,
+      importData,
+    ],
   );
 
+  if (!ready) return null;
   return <AppStateContext.Provider value={value}>{children}</AppStateContext.Provider>;
 }
 

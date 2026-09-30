@@ -7,12 +7,11 @@ import { looksLikeNaturalLanguage, parseListText, type GroceryItem, type ParsedI
 import { useTheme } from '@/components/theme';
 import { Button, Card, Field, Label, Row, Screen } from '@/components/ui';
 import { parseNaturalLanguage } from '@/lib/ai';
-import { newId } from '@/lib/id';
 import { useAppState } from '@/state/AppState';
 
 export default function ListEditorScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
-  const { getList, updateList, comparisonsLeft } = useAppState();
+  const { getList, updateList, addItems } = useAppState();
   const list = getList(id);
   const t = useTheme();
   const [draft, setDraft] = useState('');
@@ -28,15 +27,7 @@ export default function ListEditorScreen() {
 
   const setItems = (items: GroceryItem[]) => updateList(list.id, { items });
 
-  const addParsed = (parsed: ParsedItem[]) => {
-    const items = list.items.map((i) => ({ ...i }));
-    for (const p of parsed) {
-      const existing = items.find((i) => i.name.toLowerCase() === p.name.toLowerCase());
-      if (existing) existing.quantity += p.quantity;
-      else items.push({ id: newId(), ...p });
-    }
-    setItems(items);
-  };
+  const addParsed = (parsed: ParsedItem[]) => addItems(list.id, parsed);
 
   const addDraft = async () => {
     const text = draft.trim();
@@ -68,8 +59,6 @@ export default function ListEditorScreen() {
     );
   };
 
-  const left = comparisonsLeft();
-
   return (
     <Screen>
       <Stack.Screen options={{ title: list.isTemplate ? 'Template' : 'Grocery List' }} />
@@ -98,6 +87,7 @@ export default function ListEditorScreen() {
       </Card>
 
       {list.items.length === 0 ? <Label variant="muted">Your list is empty.</Label> : null}
+      {list.items.length ? (
       <Card style={{ paddingVertical: 4 }}>
         {list.items.map((item, idx) => (
           <View
@@ -118,22 +108,16 @@ export default function ListEditorScreen() {
           </View>
         ))}
       </Card>
+      ) : null}
 
       {list.isTemplate ? (
         <Label variant="small">Templates are starting points – use one from My Lists to make a copy you can compare.</Label>
       ) : (
-        <>
-          <Button
-            title="Compare prices"
-            onPress={() => router.push(`/compare/${list.id}`)}
-            disabled={list.items.length === 0}
-          />
-          {Number.isFinite(left) ? (
-            <Label variant="small" style={{ textAlign: 'center' }}>
-              {left} of 10 free comparisons left this month
-            </Label>
-          ) : null}
-        </>
+        <Button
+          title="Compare prices"
+          onPress={() => router.push(`/compare/${list.id}`)}
+          disabled={list.items.length === 0}
+        />
       )}
     </Screen>
   );

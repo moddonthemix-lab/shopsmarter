@@ -1,5 +1,7 @@
 import { useColorScheme } from 'react-native';
 
+import { STORES, type StoreId } from '@/core';
+
 const light = {
   background: '#F6F7F4',
   card: '#FFFFFF',
@@ -37,4 +39,18 @@ export function useTheme(): Palette {
 export function formatMoney(n: number): string {
   const sign = n < 0 ? '-' : '';
   return `${sign}$${Math.abs(n).toFixed(2)}`;
+}
+
+// Brand colors are fine as fills, but some (Aldi navy) vanish as text on a dark background.
+const DARK_STORE_TEXT: Record<StoreId, string> = {
+  walmart: '#5AAEFF',
+  aldi: '#8C9BFF',
+  publix: '#6FCF74',
+  winndixie: '#FF7A6E',
+};
+
+/** Returns a legible text color for a store in the current color scheme. */
+export function useStoreTextColor(): (id: StoreId) => string {
+  const dark = useColorScheme() === 'dark';
+  return (id) => (dark ? DARK_STORE_TEXT[id] : STORES[id].color);
 }

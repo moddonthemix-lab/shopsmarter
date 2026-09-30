@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "Florida Grocery Saver",
+    "name": "Grocery Saver",
     "slug": "florida-grocery-saver",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -13,7 +13,7 @@
     },
     "android": {
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
+        "backgroundColor": "#1F8A4C",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
         "backgroundImage": "./assets/images/android-icon-background.png",
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
@@ -23,8 +23,12 @@
     },
     "web": {
       "bundler": "metro",
-      "output": "static",
-      "favicon": "./assets/images/favicon.png"
+      "output": "single",
+      "favicon": "./assets/images/favicon.png",
+      "name": "Grocery Saver",
+      "shortName": "Grocery Saver",
+      "themeColor": "#1F8A4C",
+      "backgroundColor": "#F6F7F4"
     },
     "plugins": [
       "expo-router",
@@ -33,7 +37,7 @@
         {
           "image": "./assets/images/splash-icon.png",
           "resizeMode": "contain",
-          "backgroundColor": "#ffffff"
+          "backgroundColor": "#1F8A4C"
         }
       ],
       [

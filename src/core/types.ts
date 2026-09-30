@@ -40,12 +40,16 @@ export interface Product {
   /** Search terms that describe this product, e.g. ["milk", "whole milk"]. */
   keywords: string[];
   lastUpdated: string;
+  /** 'user' = a price you entered yourself; otherwise bundled sample data. */
+  source?: 'sample' | 'user';
 }
 
 export interface GroceryItem {
   id: string;
   name: string;
   quantity: number;
+  /** Ticked off while shopping. */
+  checked?: boolean;
 }
 
 export interface GroceryList {

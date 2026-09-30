@@ -1,12 +1,10 @@
 import { router, useLocalSearchParams } from 'expo-router';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
 
 import {
   compareList,
   CONFIDENT_MATCH,
-  SAMPLE_PRODUCTS,
-  STORE_IDS,
   STORE_LOCATIONS,
   STORES,
   substitutionsFor,
@@ -16,7 +14,7 @@ import {
 } from '@/core';
 import { formatMoney, useTheme } from '@/components/theme';
 import { Badge, Button, Card, Divider, Label, Row, Screen } from '@/components/ui';
-import { FREE_COMPARISONS_PER_MONTH, useAppState } from '@/state/AppState';
+import { useAppState } from '@/state/AppState';
 
 function StoreName({ id, bold }: { id: StoreId; bold?: boolean }) {
   return (
@@ -44,34 +42,27 @@ function minutes(n: number): string {
 
 export default function CompareScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
-  const { getList, settings, consumeComparison, ready } = useAppState();
+  const { getList, settings, products } = useAppState();
   const list = getList(id);
   const t = useTheme();
-
-  // Charge one comparison per visit to this screen (free plan quota).
-  const charged = useRef(false);
-  const [allowed, setAllowed] = useState<boolean | null>(null);
-  useEffect(() => {
-    if (!ready || charged.current) return;
-    charged.current = true;
-    setAllowed(consumeComparison());
-  }, [ready, consumeComparison]);
+  const storeIds = settings.enabledStores;
 
   const result = useMemo(
     () =>
       list
-        ? compareList(list.items, SAMPLE_PRODUCTS, {
+        ? compareList(list.items, products, {
             home: settings.home,
             locations: STORE_LOCATIONS,
             driving: settings.driving,
             splitThreshold: settings.splitThreshold,
+            storeIds,
           })
         : null,
-    [list, settings],
+    [list, products, settings, storeIds],
   );
 
   const [shopAt, setShopAt] = useState<StoreId | null>(null);
-  const plannedStore = shopAt ?? result?.bestSingle?.storeIds[0] ?? result?.storeTotals[0]?.storeId ?? 'walmart';
+  const plannedStore = shopAt ?? result?.bestSingle?.storeIds[0] ?? result?.storeTotals[0]?.storeId ?? storeIds[0];
   const subs = useMemo(
     () => (result ? substitutionsFor(result.matches, plannedStore) : []),
     [result, plannedStore],
@@ -85,24 +76,13 @@ export default function CompareScreen() {
     );
   }
 
-  if (allowed === false) {
-    return (
-      <Screen>
-        <Card>
-          <Label variant="heading">You&apos;ve used all {FREE_COMPARISONS_PER_MONTH} free comparisons this month</Label>
-          <Label variant="muted">
-            Upgrade to Pro ($4.99/month) for unlimited comparisons, price alerts, price history, family budgeting and
-            receipt scanning.
-          </Label>
-          <Button title="See Pro plan" onPress={() => router.push('/settings')} />
-        </Card>
-      </Screen>
-    );
-  }
-
   const { storeTotals, bestSingle, bestSplit, cheapestCombination, unmatched, matches } = result;
   const cheapestId = bestSingle?.storeIds[0];
   const priciest = storeTotals.filter((s) => s.missing.length === 0).at(-1);
+  const shop = (stores: StoreId[]) => router.push({ pathname: '/shop/[id]', params: { id: list.id, stores: stores.join(',') } });
+  const samplePriced = new Set(
+    matches.flatMap((m) => storeIds.map((s) => m.byStore[s]?.product).filter((p) => p && p.source !== 'user')),
+  ).size;
 
   return (
     <Screen>
@@ -125,6 +105,10 @@ export default function CompareScreen() {
           <Label variant="small">
             {bestSingle.miles.toFixed(1)} mi round trip · about {formatMoney(bestSingle.fuelCost)} in gas
           </Label>
+          <Button
+            title={`Start shopping at ${STORES[bestSingle.storeIds[0]].name}`}
+            onPress={() => shop(bestSingle.storeIds)}
+          />
         </Card>
       ) : (
         <Card style={{ backgroundColor: t.warning }}>
@@ -136,7 +120,7 @@ export default function CompareScreen() {
       <Card>
         <Label variant="heading">Store totals</Label>
         {storeTotals.map((s) => (
-          <View key={s.storeId}>
+          <Pressable key={s.storeId} onPress={() => shop([s.storeId])} accessibilityHint="Start shopping at this store">
             <Row style={{ justifyContent: 'space-between' }}>
               <StoreName id={s.storeId} bold={s.storeId === cheapestId} />
               <Row>
@@ -149,11 +133,19 @@ export default function CompareScreen() {
             {s.missing.length ? (
               <Label variant="small">Doesn&apos;t carry: {s.missing.map((i) => i.name).join(', ')}</Label>
             ) : null}
-          </View>
+          </Pressable>
         ))}
+        <Label variant="small">Tap a store to shop there.</Label>
       </Card>
 
-      {bestSplit ? <SplitCard analysis={bestSplit} hasSingle={!!bestSingle} threshold={settings.splitThreshold} /> : null}
+      {bestSplit ? (
+        <SplitCard
+          analysis={bestSplit}
+          hasSingle={!!bestSingle}
+          threshold={settings.splitThreshold}
+          onShop={() => shop(bestSplit.plan.route.map((r) => r.storeId))}
+        />
+      ) : null}
 
       {cheapestCombination &&
       bestSplit &&
@@ -173,7 +165,7 @@ export default function CompareScreen() {
         <Label variant="heading">Smart substitutions</Label>
         <Label variant="small">If you shop at…</Label>
         <Row style={{ flexWrap: 'wrap' }}>
-          {STORE_IDS.map((s) => (
+          {storeIds.map((s) => (
             <Pressable
               key={s}
               onPress={() => setShopAt(s)}
@@ -210,6 +202,7 @@ export default function CompareScreen() {
 
       <Card>
         <Label variant="heading">Product matches</Label>
+        <Label variant="small">Tap a price to update it, or “+ add price” if the store carries it.</Label>
         {matches.map((m) => (
           <View key={m.item.id} style={{ gap: 2 }}>
             <Divider />
@@ -217,25 +210,39 @@ export default function CompareScreen() {
               {m.item.quantity > 1 ? `${m.item.quantity} × ` : ''}
               {m.item.name}
             </Label>
-            {STORE_IDS.map((s) => {
+            {storeIds.map((s) => {
               const match = m.byStore[s];
               return (
-                <Row key={s} style={{ justifyContent: 'space-between' }}>
+                <Pressable
+                  key={s}
+                  onPress={() =>
+                    router.push(
+                      match && match.score >= CONFIDENT_MATCH
+                        ? { pathname: '/price', params: { productId: match.product.id } }
+                        : { pathname: '/price', params: { storeId: s, name: m.item.name } },
+                    )
+                  }
+                  style={({ pressed }) => [styles.matchRow, { opacity: pressed ? 0.6 : 1 }]}>
                   <Label variant="small" style={{ flex: 1 }} numberOfLines={1}>
                     {STORES[s].name}:{' '}
                     {match
                       ? `${match.product.name} ${match.product.size}${match.score < CONFIDENT_MATCH ? ' (closest match)' : ''}`
-                      : 'not carried'}
+                      : 'not found'}
                   </Label>
                   {match ? (
                     <Row style={{ gap: 4 }}>
                       {match.product.deal ? <Badge text={match.product.deal.label} color={t.accent} /> : null}
-                      <Label variant="small" style={styles.num}>
+                      {match.product.source === 'user' ? <Label variant="small">✓</Label> : null}
+                      <Label variant="small" style={[styles.num, { textDecorationLine: 'underline' }]}>
                         {formatMoney(match.product.price)}
                       </Label>
                     </Row>
-                  ) : null}
-                </Row>
+                  ) : (
+                    <Label variant="small" style={{ color: t.primary, fontWeight: '600' }}>
+                      + add price
+                    </Label>
+                  )}
+                </Pressable>
               );
             })}
           </View>
@@ -246,13 +253,26 @@ export default function CompareScreen() {
         <Card style={{ backgroundColor: t.warning }}>
           <Label variant="heading">Couldn&apos;t find</Label>
           <Label variant="muted">
-            {unmatched.map((i) => i.name).join(', ')} – try a more common name (e.g. “chicken breast”).
+            {unmatched.map((i) => i.name).join(', ')} – try a more common name (e.g. “chicken breast”), or add the
+            price you see at the store:
           </Label>
+          <Row style={{ flexWrap: 'wrap' }}>
+            {unmatched.map((i) => (
+              <Button
+                key={i.id}
+                title={`+ ${i.name}`}
+                kind="secondary"
+                onPress={() => router.push({ pathname: '/price', params: { name: i.name, storeId: plannedStore } })}
+              />
+            ))}
+          </Row>
         </Card>
       ) : null}
 
       <Label variant="small" style={{ textAlign: 'center' }}>
-        Prices are estimates and may vary by location. Driving costs use {settings.driving.mpg} MPG and{' '}
+        {samplePriced
+          ? `${samplePriced} of the prices used are sample estimates – update them from the shelf or your receipt. `
+          : 'All prices are ones you entered. '} Driving costs use {settings.driving.mpg} MPG and{' '}
         {formatMoney(settings.driving.fuelPricePerGallon)}/gal from {settings.home.label}.
       </Label>
     </Screen>
@@ -263,10 +283,12 @@ function SplitCard({
   analysis,
   hasSingle,
   threshold,
+  onShop,
 }: {
   analysis: NonNullable<ReturnType<typeof compareList>['bestSplit']>;
   hasSingle: boolean;
   threshold: number;
+  onShop: () => void;
 }) {
   const t = useTheme();
   const { plan } = analysis;
@@ -327,6 +349,7 @@ function SplitCard({
           {plan.miles.toFixed(1)} mi · {formatMoney(plan.fuelCost)} gas · {minutes(plan.minutes)}
         </Label>
       )}
+      <Button title="Shop this split trip" kind={analysis.worthIt ? 'primary' : 'secondary'} onPress={onShop} />
     </Card>
   );
 }
@@ -340,5 +363,6 @@ function groupLines(plan: TripPlan): Partial<Record<StoreId, PricedLine[]>> {
 const styles = StyleSheet.create({
   dot: { width: 10, height: 10, borderRadius: 5 },
   num: { fontVariant: ['tabular-nums'] },
+  matchRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8, paddingVertical: 3 },
   chip: { borderWidth: 1.5, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 4 },
 });
