@@ -28,12 +28,13 @@ device.
 The repo includes a workflow (`.github/workflows/deploy-pages.yml`) that builds and publishes the web app whenever
 `main` is pushed.
 
-1. Merge this branch into `main`.
-2. On GitHub go to **Settings → Pages → Build and deployment → Source** and choose **GitHub Actions**.
-3. Run the **Deploy web app to GitHub Pages** workflow (Actions tab), or push to `main`.
-4. Open `https://<your-username>.github.io/shopsmarter/` on your phone and add it to your home screen: **Share → Add
+1. On GitHub go to **Settings → Pages → Build and deployment → Source** and choose **GitHub Actions**.
+   (If it says "Deploy from a branch", GitHub just renders this README as a web page instead of the app.)
+2. Run the **Deploy web app to GitHub Pages** workflow (Actions tab → Run workflow). After that, every push to
+   `main` or `claude/serene-hopper-9ors7u` redeploys automatically.
+3. Open `https://<your-username>.github.io/shopsmarter/` on your phone and add it to your home screen: **Share → Add
    to Home Screen** in Safari, or **⋮ → Add to Home screen / Install app** in Chrome. It opens full screen with its
-   own icon.
+   own icon, and works offline once it has been opened (useful inside stores with bad signal).
 
 GitHub Pages is free for public repositories; a private repo needs a paid GitHub plan for Pages. Your lists and
 prices are never uploaded anywhere; they stay in your phone's browser storage.
